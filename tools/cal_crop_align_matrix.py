@@ -19,13 +19,13 @@ FOCAL_CODE = 37386
 
 
 def get_bayer(path, black_lv, white_lv):
-    try:
-        raw = rawpy.imread(path)
-    except:
-        return None
-    bayer = raw.raw_image_visible.astype(np.float32)
-    bayer = (bayer - black_lv)/ (white_lv - black_lv) #subtract the black level
-    return bayer
+	try:
+		raw = rawpy.imread(path)
+	except:
+		return None
+	bayer = raw.raw_image_visible.astype(np.float32)
+	bayer = (bayer - black_lv)/ (white_lv - black_lv) #subtract the black level
+	return bayer
 
 def readFocal_pil(image_path):
 	if 'ARW' in image_path:
@@ -49,32 +49,44 @@ def crop_fov(image, ratio):
 	return cropped
 
 
-def align_ecc(images_gray_set, ref_ind, thre=0.05):
+def align_ecc(images_gray_set, ref_ind, thre=0.05, mode = 'Homo'):
 	img_num = len(images_gray_set)
 	ref_gray_image = images_gray_set[ref_ind]
 	r, c = images_gray_set[0].shape[0:2]
 
-	warp_mode = cv2.MOTION_AFFINE
-
-	identity_transform = np.eye(2, 3, dtype=np.float32)
-	warp_matrix = np.eye(2, 3, dtype=np.float32)
-
+	if mode == 'Homo':
+		warp_mode = cv2.MOTION_HOMOGRAPHY # 3*3
+	else:
+		warp_mode = cv2.MOTION_AFFINE  # 2*3
+		
+	if warp_mode == cv2.MOTION_HOMOGRAPHY :
+		identity_transform = np.eye(3, 3, dtype=np.float32)
+		tform_set = np.zeros((img_num, 3, 3), dtype=np.float32)
+		tform_inv_set = np.zeros_like(tform_set)
+	else :
+		identity_transform = np.eye(2, 3, dtype=np.float32)
+		tform_set = np.zeros((img_num, 2, 3), dtype=np.float32)
+		tform_inv_set = np.zeros_like(tform_set)
+	
 	number_of_iterations = 500
 	termination_eps = 1e-6
 	criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations, termination_eps)
 
 	# Run the ECC algorithm. The results are stored in warp_matrix.
-	tform_set = np.zeros((img_num, 2, 3), dtype=np.float32)
-	tform_inv_set = np.zeros_like(tform_set)
-
 	motion_thre = thre * min(r, c)
 
 	for i in range(0, img_num, 1): # forward
-		warp_matrix = np.eye(2, 3, dtype=np.float32)
+		if warp_mode == cv2.MOTION_HOMOGRAPHY :
+			warp_matrix = np.eye(3, 3, dtype=np.float32)
+		else:
+			warp_matrix = np.eye(2, 3, dtype=np.float32)
 		_, warp_matrix = cv2.findTransformECC(ref_gray_image, images_gray_set[i], warp_matrix, warp_mode, criteria)
 		
 		tform_set[i] = warp_matrix
-		tform_inv_set[i] = cv2.invertAffineTransform(warp_matrix)
+		if warp_mode == cv2.MOTION_HOMOGRAPHY :
+			_, tform_inv_set[i] = cv2.invert(warp_matrix)
+		else:
+			tform_inv_set[i] = cv2.invertAffineTransform(warp_matrix)
 
 		motion_val = abs(warp_matrix - identity_transform).sum()
 		if motion_val < motion_thre:
@@ -84,14 +96,25 @@ def align_ecc(images_gray_set, ref_ind, thre=0.05):
 	return tform_set, tform_inv_set
 
 
+def back_to_rgb(x):
+	x = reshape_back_raw(x)
+	x = whiht_balance(x)
+	x = demosaic(x)
+	x = ccm_gamma(x)
+	x = x[:, :, ::-1].astype(np.float32)
+	return x
+
 if __name__ == "__main__":
-	rsz = 3
+	rsz = 2
 	raw_imgs = []
 	focals = []
 	resized_imgs = []
 	resized_gray_imgs = []
 
-	desti = "/home/chenyuxiang/repos/00179/myisp"
+	desti = "/home/chenyuxiang/repos/00179/myisp_no_rgb_align"
+	if not os.path.exists(desti):
+		os.mkdir(desti)
+
 	for i in range(1, 8):
 		imgpath = os.path.join(dirpath, "{}.JPG".format(str(i).zfill(5)))
 		focal = readFocal_pil(imgpath)
@@ -103,11 +126,10 @@ if __name__ == "__main__":
 		H,W = input_raw.shape
 		reshaped_raw = reshape_raw(input_raw) # h/2, w/2, 4
 		croped_rawimg = crop_fov(reshaped_raw, ratio=focal / focals[0])
-		croped_rgbimg = reshape_back_raw(croped_rawimg)
-		croped_rgbimg = whiht_balance(croped_rgbimg)
-		croped_rgbimg = demosaic(croped_rgbimg)
-		# croped_rgbimg = ccm_gamma(croped_rgbimg)
-		croped_rgbimg = croped_rgbimg[:, :, ::-1].astype(np.float32)
+
+		raw_imgs.append(croped_rawimg)
+
+		croped_rgbimg = back_to_rgb(croped_rawimg)
 		
 		dsize = (W // 2, H // 2)
 		dsize_align = (W// (2**rsz), H // (2**rsz))
@@ -123,6 +145,14 @@ if __name__ == "__main__":
 	# t  ref -> other
 	# t_inv  other -> ref
 	t, t_inv = align_ecc(resized_gray_imgs, ref_ind = 0, thre=0.3)
+	
+	# # align imgs to ref
+	for i in range(2, 8):
+		# align in original 
+		img = cv2.warpPerspective(resized_gray_imgs[i-1], t_inv[i-1], dsize=dsize_align)
+		# img = cv2.warpAffine(resized_gray_imgs[i-1], t_inv[i-1], dsize=dsize_align) 
+		cv2.imwrite("{}/{}.png".format(desti, i), (img*255).astype(np.uint8))
+
 
 	# scale back
 	t[:, 0, 2] *= (2**rsz) / 2
@@ -130,20 +160,19 @@ if __name__ == "__main__":
 	t_inv[:, 0, 2] *= (2**rsz) / 2
 	t_inv[:, 1, 2] *= (2**rsz) / 2
 	
-	img = resized_imgs[0]
-	img = reshape_back_raw(img)
-	img = whiht_balance(img)
-	img = demosaic(img)
-	img = ccm_gamma(img)
-	img = img[:, :, ::-1].astype(np.float32)
-	cv2.imwrite("{}/{}.png".format(desti, 1), (img*255).astype(np.uint8))
-	# # align imgs to ref
-	for i in range(2, 8):
-		# align in original 
-		img = cv2.warpAffine(resized_imgs[i-1], t_inv[i-1], dsize=dsize) 
-		img = reshape_back_raw(img)
-		img = whiht_balance(img)
-		img = demosaic(img)
-		img = ccm_gamma(img)
-		img = img[:, :, ::-1].astype(np.float32)
-		cv2.imwrite("{}/{}.png".format(desti, i), (img*255).astype(np.uint8))
+
+	# save 1 align to 5
+	lr_index = 3
+	# img = cv2.warpAffine(resized_imgs[0], t[lr_index], dsize=dsize) 
+	img = cv2.warpPerspective(resized_imgs[0], t[lr_index], dsize=dsize)
+	LR = raw_imgs[lr_index] 
+	h,w,_ = LR.shape
+	# resize to 4x of 6
+	HR = cv2.resize(img, dsize=(4*w, 4*h), interpolation=cv2.INTER_CUBIC)
+	print(LR.shape, HR.shape)
+	LR_rgb = back_to_rgb(LR)
+	HR_rgb = back_to_rgb(HR)
+	cv2.imwrite("{}/LR.png".format(desti), (LR_rgb*255).astype(np.uint8))
+	cv2.imwrite("{}/HR.png".format(desti), (HR_rgb*255).astype(np.uint8))
+	
+
