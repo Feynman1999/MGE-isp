@@ -68,8 +68,8 @@ def align_ecc(images_gray_set, ref_ind, thre=0.05, mode = 'Homo'):
 		tform_set = np.zeros((img_num, 2, 3), dtype=np.float32)
 		tform_inv_set = np.zeros_like(tform_set)
 	
-	number_of_iterations = 500
-	termination_eps = 1e-6
+	number_of_iterations = 1000
+	termination_eps = 1e-7
 	criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations, termination_eps)
 
 	# Run the ECC algorithm. The results are stored in warp_matrix.
@@ -92,7 +92,8 @@ def align_ecc(images_gray_set, ref_ind, thre=0.05, mode = 'Homo'):
 		if motion_val < motion_thre:
 			pass
 		else:
-			raise RuntimeError("")
+			pass
+			# raise RuntimeError("")
 	return tform_set, tform_inv_set
 
 
@@ -105,13 +106,15 @@ def back_to_rgb(x):
 	return x
 
 if __name__ == "__main__":
-	rsz = 2
+	rsz = 0
+	crop_ratio = 0.3
 	raw_imgs = []
 	focals = []
 	resized_imgs = []
 	resized_gray_imgs = []
 
-	desti = "/home/chenyuxiang/repos/00179/myisp_no_rgb_align"
+	desti = "/home/chenyuxiang/repos/00179/myisp_crop_0.3"
+
 	if not os.path.exists(desti):
 		os.mkdir(desti)
 
@@ -123,15 +126,16 @@ if __name__ == "__main__":
 		# get raw data
 		path_raw = os.path.join(dirpath, "{}.ARW".format(str(i).zfill(5)))
 		input_raw = get_bayer(path_raw, black_lv = 512, white_lv = 16383)
-		H,W = input_raw.shape
+		
 		reshaped_raw = reshape_raw(input_raw) # h/2, w/2, 4
-		croped_rawimg = crop_fov(reshaped_raw, ratio=focal / focals[0])
+		croped_rawimg = crop_fov(reshaped_raw, ratio = crop_ratio * focal / focals[0])
 
 		raw_imgs.append(croped_rawimg)
 
 		croped_rgbimg = back_to_rgb(croped_rawimg)
 		
-		dsize = (W // 2, H // 2)
+		H, W , _ = raw_imgs[0].shape
+		dsize = (W, H)
 		dsize_align = (W// (2**rsz), H // (2**rsz))
 
 		# # resize croped img
@@ -144,32 +148,33 @@ if __name__ == "__main__":
 
 	# t  ref -> other
 	# t_inv  other -> ref
-	t, t_inv = align_ecc(resized_gray_imgs, ref_ind = 0, thre=0.3)
+	t, t_inv = align_ecc(resized_gray_imgs, ref_ind = 0, thre=0.3, mode='affine')
 	
 	# # align imgs to ref
 	for i in range(2, 8):
 		# align in original 
-		img = cv2.warpPerspective(resized_gray_imgs[i-1], t_inv[i-1], dsize=dsize_align)
-		# img = cv2.warpAffine(resized_gray_imgs[i-1], t_inv[i-1], dsize=dsize_align) 
+		# img = cv2.warpPerspective(resized_gray_imgs[i-1], t_inv[i-1], dsize=dsize_align)
+		img = cv2.warpAffine(resized_gray_imgs[i-1], t_inv[i-1], dsize=dsize_align) 
 		cv2.imwrite("{}/{}.png".format(desti, i), (img*255).astype(np.uint8))
 
 
 	# scale back
-	t[:, 0, 2] *= (2**rsz) / 2
-	t[:, 1, 2] *= (2**rsz) / 2
-	t_inv[:, 0, 2] *= (2**rsz) / 2
-	t_inv[:, 1, 2] *= (2**rsz) / 2
-	
+	t[:, 0, 2] *= (2**rsz) 
+	t[:, 1, 2] *= (2**rsz)
+	t_inv[:, 0, 2] *= (2**rsz)
+	t_inv[:, 1, 2] *= (2**rsz)
 
-	# save 1 align to 5
+
+	# save 1 align to 4
 	lr_index = 3
-	# img = cv2.warpAffine(resized_imgs[0], t[lr_index], dsize=dsize) 
-	img = cv2.warpPerspective(resized_imgs[0], t[lr_index], dsize=dsize)
+	img = cv2.warpAffine(resized_imgs[0], t[lr_index], dsize=dsize, borderValue=-1) 
+	# img = cv2.warpPerspective(resized_imgs[0], t[lr_index], dsize=dsize)
 	LR = raw_imgs[lr_index] 
 	h,w,_ = LR.shape
 	# resize to 4x of 6
 	HR = cv2.resize(img, dsize=(4*w, 4*h), interpolation=cv2.INTER_CUBIC)
 	print(LR.shape, HR.shape)
+	# 
 	LR_rgb = back_to_rgb(LR)
 	HR_rgb = back_to_rgb(HR)
 	cv2.imwrite("{}/LR.png".format(desti), (LR_rgb*255).astype(np.uint8))

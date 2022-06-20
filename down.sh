@@ -1,0 +1,1 @@
+curl -H "Authorization: Bearer ya29.a0ARrdaM_jbtrXdaETW1SMzeYSIPmsegAjT8mR0gfH5Fa5dYal1ohZBM2yOv0WTaq21j0-pmyZKzLb4CoxfJN_lZNQdxkM52gFifv72Hfr40nYzuGwGCSxzsBz89ZfI1QMDaj73e_uxwdybVL8sQWwQq9BfKHp" https://www.googleapis.com/drive/v3/files/19zlN1fqRRm7E_6i5J3B1OskJocVeuvzG?alt=media -o test.zip
