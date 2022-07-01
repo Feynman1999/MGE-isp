@@ -4,6 +4,7 @@ import logging
 model = dict(
     type="kernel_Estimation",
     conv_net = dict(
+        type = 'pixelwisekernel',
         kernel_size = 11,
     ),
 )

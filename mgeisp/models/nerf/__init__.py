@@ -1,1 +1,0 @@
-from .coarsefine import Coarse_Fine_Nerf
